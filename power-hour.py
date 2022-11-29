@@ -1,6 +1,7 @@
+from datetime import datetime
 from pytube import YouTube
 from youtube_search import YoutubeSearch
-import xlrd
+from openpyxl import load_workbook
 from os import path
 # from pprint import pprint
 from termcolor import colored, cprint
@@ -8,18 +9,22 @@ from moviepy.editor import *
 import sys
 
 youtube_url = 'https://youtube.com'
-loc = "./2010s power hour playlist.xlsx"
+# Set this to your spreadsheet
+loc = "./example-playlist.xlsx"
 
-wb = xlrd.open_workbook(loc)
-sheet = wb.sheet_by_index(0)
+wb = load_workbook(loc)
+sheet = wb.active
 
 beer_animation_title = 'Animated Hand(s) Opening Can of Beer ~ Green Screen'
 into_video = ''
 intro_length = 0
 outro_video = ''
 outro_length = 0
-clip_length = 30
-number_to_download = 20
+# replace this with the spreadsheet range
+clip_length = 60
+number_to_download = 4
+video_height = 720
+video_width = 1280
 
 
 def get_best_video(videos=[]):
@@ -35,8 +40,8 @@ def get_best_video(videos=[]):
 def video_downloaded(title: str, extension: str='mp4'):
     safe_title = make_tite_safe(title)
     c_title = colored(safe_title, 'red')
-    print('trying to check if - ./' + c_title + '.' + extension + ' exists')
-    return path.exists('./' + safe_title + '.' + extension)
+    print('trying to check if - ./videos/' + c_title + '.' + extension + ' exists')
+    return path.exists('./videos/' + safe_title + '.' + extension)
 
 
 def make_tite_safe(title: str):
@@ -44,7 +49,7 @@ def make_tite_safe(title: str):
 
 
 def process_clip(clip, offset: int = 0):
-    return clip.subclip(offset, offset + clip_length).resize((1280, 720))
+    return clip.subclip(offset, offset + clip_length).resize((video_width, video_height))
 
 
 def download_video(title: str, link):
@@ -53,7 +58,7 @@ def download_video(title: str, link):
         YouTube(youtube_url + link).streams.get_highest_resolution().download()
     else:
         cprint('VIDEO already downloaded', 'yellow')
-    return VideoFileClip('./' + make_tite_safe(title) + '.mp4')
+    return VideoFileClip('./videos/' + make_tite_safe(title) + '.mp4')
 
 # START
 cprint('Checking BEER ANIMATION', 'green')
@@ -64,32 +69,41 @@ else:
     cprint('BEER ANIMATION already downloaded', 'yellow')
 # make clip shorter
 beer_title = make_tite_safe(beer_animation_title)
-beer_animation_clip = VideoFileClip(beer_title + '.mp4')
+beer_animation_clip = VideoFileClip('./videos/' + beer_title + '.mp4')
 beer_animation_clip = beer_animation_clip.subclip(3, 9).fx(vfx.mask_color, color=[0, 255, 0], thr=100, s=5)
 
-count = 1
+# we start on row 2, because row 1 is the label
+count = 2
 all_video_clips = []
 all_beer_effects = []
 
+SONG_NAME_COL = "A"
+SONG_ARTIST_COL = "B"
+SONG_OFFSET_COL = "D"
+
 while count < number_to_download + 1:
-    cprint('SEARCHING FOR SONG "' + sheet.cell_value(count, 0) + '"', 'green')
-    results = YoutubeSearch(sheet.cell_value(count, 0), max_results=5)
+    cprint('SEARCHING FOR SONG "' + sheet[SONG_NAME_COL + str(count)].value + '"', 'green')
+    results = YoutubeSearch(sheet[SONG_NAME_COL + str(count)].value, max_results=5)
+    cprint('SEARCHING FOR SONG "' + str(len(results.videos)) + '"', 'green')
+
     video = get_best_video(results.videos)
     if video:
-        print('Video found online: ' + video['title'] + video['link'])
-        clip = download_video(video['title'], video['link'])
-        short_clip = process_clip(clip, int(sheet.cell_value(count, 3)))
+        print('Video found online: ' + video['title'] + video['url_suffix'])
+        clip = download_video(video['title'], "https://www.youtube.com/" + video['url_suffix'])
+        short_clip = process_clip(clip, int(sheet[SONG_OFFSET_COL + str(count)].value))
 
         print('Adding clip to all_video_clips')
         all_video_clips.append(short_clip)
         print('Adding beer animation')
         all_beer_effects.append(
-            beer_animation_clip.set_start(intro_length + (clip_length * count) - 5)
+            beer_animation_clip
+            # because the count start at row 2, we need to take away 1...
+            .set_start(intro_length + (clip_length * (count - 1)) - 5)
             .set_position('center', 'center')
         )
 
     else:
-        cprint('No good video found for ' + sheet.cell_value(count, 0), 'red')
+        cprint('No good video found for ' + sheet[SONG_NAME_COL + str(count)].value, 'red')
         sys.exit()
     count += 1
 
@@ -101,7 +115,7 @@ print('Adding beer can masks')
 masked_clip = CompositeVideoClip([
     final_clip.set_position('center', 'center'),
     *all_beer_effects,
-], size=(1280, 720)).set_duration(intro_length + outro_length + (number_to_download * clip_length))
+], size=(video_width, video_height)).set_duration(intro_length + outro_length + (number_to_download * clip_length))
 
 print('Writing file')
-masked_clip.write_videofile('./final.mp4', fps=30)
+masked_clip.write_videofile('./out/final-' + datetime.now().strftime("%H-%M-%S") + '.mp4', fps=30)
